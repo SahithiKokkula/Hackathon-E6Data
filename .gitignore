@@ -1,0 +1,44 @@
+node_modules/
+dist/
+*.log
+*.tmp
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+*.db
+data/
+.DS_Store
+coverage/
+bin/
+
+# Build artifacts
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Test files and temporary docs
+test_*
+*_test.*
+temp_*
+*_temp.*
+*_TEMP.*
+*_FIX.*
+*_STATUS.*
+*_SUMMARY.*
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS generated files
+Thumbs.db
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db

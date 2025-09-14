@@ -1,0 +1,20 @@
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: cmd/aqe-server/Dockerfile
+    environment:
+      - AQE_DB_PATH=/data/aqe.sqlite
+      - PORT=8080
+    volumes:
+      - ./data:/data
+    ports:
+      - "8080:8080"
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "5173:80"
+    depends_on:
+      - backend

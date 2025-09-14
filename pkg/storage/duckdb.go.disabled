@@ -1,0 +1,103 @@
+package storage
+
+import (
+    "context"
+    "database/sql"
+    "fmt"
+    "path/filepath"
+    "strings"
+
+    _ "github.com/marcboeker/go-duckdb"
+)
+
+// DuckDBStorage provides DuckDB-based query execution for Parquet files
+type DuckDBStorage struct {
+    db *sql.DB
+}
+
+// NewDuckDBStorage creates a new DuckDB storage instance
+func NewDuckDBStorage() (*DuckDBStorage, error) {
+    // Use the updated API for go-duckdb v1.8.2
+    db, err := sql.Open("duckdb", "")
+    if err != nil {
+        return nil, fmt.Errorf("failed to open DuckDB: %w", err)
+    }
+
+    // Install extensions if needed
+    _, err = db.Exec("INSTALL httpfs;")
+    if err != nil {
+        // Ignore if already installed or not available
+    }
+    
+    _, err = db.Exec("LOAD httpfs;")
+    if err != nil {
+        // Ignore if can't load
+    }
+
+    return &DuckDBStorage{db: db}, nil
+}
+
+// Close closes the DuckDB connection
+func (d *DuckDBStorage) Close() error {
+    return d.db.Close()
+}
+
+// ExecuteQuery executes a SQL query against DuckDB
+func (d *DuckDBStorage) ExecuteQuery(ctx context.Context, query string) (*sql.Rows, error) {
+    return d.db.QueryContext(ctx, query)
+}
+
+// CreateParquetTable creates a view or table pointing to a Parquet file
+func (d *DuckDBStorage) CreateParquetTable(ctx context.Context, tableName, parquetPath string) error {
+    // Normalize path for Windows
+    parquetPath = filepath.ToSlash(parquetPath)
+    query := fmt.Sprintf("CREATE OR REPLACE VIEW %s AS SELECT * FROM read_parquet('%s')", tableName, parquetPath)
+    _, err := d.db.ExecContext(ctx, query)
+    return err
+}
+
+// CreateSampleView creates a sample view from an existing table/view
+func (d *DuckDBStorage) CreateSampleView(ctx context.Context, baseTable, sampleTable string, fraction float64) error {
+    // Use DuckDB's SAMPLE function for uniform sampling
+    query := fmt.Sprintf("CREATE OR REPLACE VIEW %s AS SELECT * FROM %s USING SAMPLE %f", 
+        sampleTable, baseTable, fraction*100) // DuckDB SAMPLE takes percentage
+    _, err := d.db.ExecContext(ctx, query)
+    return err
+}
+
+// ListTables lists available tables and views in DuckDB
+func (d *DuckDBStorage) ListTables(ctx context.Context) ([]string, error) {
+    rows, err := d.db.QueryContext(ctx, "SELECT table_name FROM information_schema.tables WHERE table_schema='main'")
+    if err != nil {
+        return nil, err
+    }
+    defer rows.Close()
+
+    var tables []string
+    for rows.Next() {
+        var tableName string
+        if err := rows.Scan(&tableName); err != nil {
+            continue
+        }
+        tables = append(tables, tableName)
+    }
+    return tables, nil
+}
+
+// RewriteQueryForSample rewrites a query to use a sample table and scale aggregates
+func (d *DuckDBStorage) RewriteQueryForSample(originalSQL, baseTable, sampleTable string, fraction float64) string {
+    // Simple replacement for MVP - replace table name and scale aggregates
+    rewritten := strings.ReplaceAll(originalSQL, baseTable, sampleTable)
+    
+    // Scale COUNT(*) and SUM() - this is a simplified approach
+    // In production, would use a proper SQL parser
+    rewritten = strings.ReplaceAll(rewritten, "COUNT(*)", fmt.Sprintf("(COUNT(*) / %f)", fraction))
+    
+    // Scale SUM functions - simplified regex approach
+    if strings.Contains(strings.ToUpper(rewritten), "SUM(") {
+        // For MVP, wrap entire query to scale sums
+        rewritten = fmt.Sprintf("SELECT *, CASE WHEN typeof(column_value) IN ('DOUBLE', 'FLOAT', 'INTEGER', 'BIGINT') THEN column_value / %f ELSE column_value END as scaled_value FROM (%s)", fraction, rewritten)
+    }
+    
+    return rewritten
+}
