@@ -253,4 +253,8 @@ This **next-generation ML-powered approximate query engine** delivers enterprise
 - **🔧 Production Ready**: Robust error handling, Docker deployment, and scalable architecture
 - **🎯 Enterprise Grade**: Perfect for analytical workloads, business intelligence, and exploratory data analysis
 
-**Start experiencing the future of adaptive query optimization today!**
+## 🤝 Collaborators
+
+- [Sahithi Kokkula](https://github.com/SahithiKokkula)
+- [Nikunj Agarwal](https://github.com/nikunjagarwal17)
+
