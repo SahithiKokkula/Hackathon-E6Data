@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"net/http"
 	"strconv"
 	"strings"
@@ -75,9 +76,10 @@ func (h *Handler) PostQuery(w http.ResponseWriter, r *http.Request) {
 	var mlOptimization *ml.QueryOptimization
 	var statisticalBounds *ml.StatisticalBounds
 	var finalSQL = req.SQL
+	var learningOptimizer *ml.LearningOptimizer
 
 	if req.UseMLOptimization && !req.PreferExact {
-		learningOptimizer := ml.NewLearningOptimizer(h.db)
+		learningOptimizer = ml.NewLearningOptimizer(h.db)
 		var err error
 		mlOptimization, err = learningOptimizer.OptimizeQueryWithLearning(ctx, req.SQL, req.MaxRelError)
 		if err != nil {
@@ -152,24 +154,77 @@ func (h *Handler) PostQuery(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		}
+	}
 
-		if mlOptimization != nil {
-			go func() {
-				learningOptimizer := ml.NewLearningOptimizer(h.db)
-				features := &ml.QueryFeatures{
-					TableSize:      200000,
+	// Record ML learning performance for ALL optimization strategies, not just sampling
+	// BUT skip recording if we're querying the ML learning table itself to prevent recursion
+	sqlLower := strings.ToLower(req.SQL)
+	isMLHistoryQuery := strings.Contains(sqlLower, "ml_query_performance_history")
+	if req.UseMLOptimization && mlOptimization != nil && !isMLHistoryQuery {
+		go func() {
+			// Add panic recovery to prevent server crashes
+			defer func() {
+				if r := recover(); r != nil {
+					// Log the panic but don't crash the server
+					fmt.Printf("Panic in ML learning goroutine: %v\n", r)
+				}
+			}()
+
+			// Use existing learning optimizer or create one if needed
+			currentLearningOptimizer := learningOptimizer
+			if currentLearningOptimizer == nil {
+				currentLearningOptimizer = ml.NewLearningOptimizer(h.db)
+			}
+
+			// Add timeout context to prevent hanging
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+
+			// Extract proper features using the optimizer instance
+			features, err := currentLearningOptimizer.ExtractQueryFeatures(ctx, req.SQL, req.MaxRelError)
+			if err != nil {
+				// Fallback to basic features if extraction fails
+				features = &ml.QueryFeatures{
+					TableSize:      200000, // Default fallback
 					ErrorTolerance: req.MaxRelError,
 					QueryLength:    len(req.SQL),
 					HasCount:       strings.Contains(strings.ToUpper(req.SQL), "COUNT"),
 					HasSum:         strings.Contains(strings.ToUpper(req.SQL), "SUM"),
 					HasGroupBy:     strings.Contains(strings.ToUpper(req.SQL), "GROUP BY"),
 				}
-				actualError := 0.02
-				baselineTime := executionTime * time.Duration(mlOptimization.EstimatedSpeedup)
-				learningOptimizer.RecordQueryPerformance(
-					context.Background(), mlOptimization, features,
-					executionTime, actualError, baselineTime)
-			}()
+			}
+			// Validate ML optimization data before recording
+			if mlOptimization.EstimatedSpeedup <= 0 {
+				mlOptimization.EstimatedSpeedup = 1.0
+			}
+			if mlOptimization.EstimatedError < 0 {
+				mlOptimization.EstimatedError = 0.0
+			}
+
+			actualError := 0.02
+			baselineTime := executionTime * time.Duration(mlOptimization.EstimatedSpeedup)
+
+			// Add error handling for RecordQueryPerformance
+			err = currentLearningOptimizer.RecordQueryPerformance(
+				ctx, mlOptimization, features,
+				executionTime, actualError, baselineTime)
+			if err != nil {
+				fmt.Printf("Error recording ML performance: %v\n", err)
+			}
+		}()
+	}
+
+	// For ML history queries, clean up the response to prevent JSON serialization issues
+	if isMLHistoryQuery && mlOptimization != nil {
+		// Reset any potentially problematic fields in mlOptimization
+		if math.IsInf(mlOptimization.EstimatedSpeedup, 0) || math.IsNaN(mlOptimization.EstimatedSpeedup) {
+			mlOptimization.EstimatedSpeedup = 1.0
+		}
+		if math.IsInf(mlOptimization.EstimatedError, 0) || math.IsNaN(mlOptimization.EstimatedError) {
+			mlOptimization.EstimatedError = 0.0
+		}
+		if math.IsInf(mlOptimization.Confidence, 0) || math.IsNaN(mlOptimization.Confidence) {
+			mlOptimization.Confidence = 0.95
 		}
 	}
 
