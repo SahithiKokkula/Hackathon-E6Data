@@ -10,6 +10,12 @@ data/
 .DS_Store
 coverage/
 bin/
+ARCHITECTURE_DOCUMENTATION.*
+IMPLEMENTATION_GUIDE.*
+ML_OPTIMIZATION_DETAILED.*
+simple_debug.*
+stress_test_simple.*
+ml_test_corrected.*
 
 # Build artifacts
 *.exe
@@ -17,8 +23,13 @@ bin/
 *.so
 *.dylib
 
-# Test files and temporary docs
+# Test files, Demo files and temporary docs
+demo_*
+*demo_
+*_demo.*
+*DEMO*
 test_*
+*test_
 *_test.*
 temp_*
 *_temp.*

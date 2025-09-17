@@ -104,7 +104,11 @@ func (opt *MLOptimizer) extractQueryFeatures(ctx context.Context, sql string, er
 	features.HasCount = strings.Contains(sqlUpper, "COUNT")
 	features.HasSum = strings.Contains(sqlUpper, "SUM")
 	features.HasAvg = strings.Contains(sqlUpper, "AVG")
-	features.HasDistinct = strings.Contains(sqlUpper, "DISTINCT")
+
+	// Better DISTINCT detection
+	features.HasDistinct = strings.Contains(sqlUpper, "COUNT(DISTINCT") ||
+		(strings.Contains(sqlUpper, "DISTINCT") && strings.Contains(sqlUpper, "COUNT"))
+
 	features.HasGroupBy = strings.Contains(sqlUpper, "GROUP BY")
 
 	if features.HasGroupBy {
@@ -126,29 +130,37 @@ func (opt *MLOptimizer) extractQueryFeatures(ctx context.Context, sql string, er
 }
 
 func (opt *MLOptimizer) chooseStrategy(features *QueryFeatures) (OptimizationStrategy, float64) {
-	if features.TableSize < 100 {
+	// Small tables should use exact computation (including 1K table)
+	if features.TableSize <= 1000 {
 		return StrategyExact, 0.95
 	}
 
-	if features.HasDistinct && features.HasCount && features.ErrorTolerance > 0.01 {
+	// DISTINCT COUNT queries should use sketching for better accuracy
+	if features.HasDistinct && features.HasCount && features.ErrorTolerance > 0.001 {
 		return StrategySketch, 0.90
 	}
 
-	if features.TableSize > 1000 && (features.HasCount || features.HasSum || features.HasAvg) && features.ErrorTolerance > 0.05 {
-		return StrategySample, 0.80
-	}
-
-	if features.HasGroupBy && features.ErrorTolerance > 0.03 {
-		if features.TableSize > 10000 {
-			return StrategySample, 0.80
+	// GROUP BY queries with reasonable error tolerance
+	if features.HasGroupBy && features.ErrorTolerance > 0.001 {
+		if features.TableSize > 10000 && features.GroupByCardinality > 1 {
+			// High cardinality GROUP BY → use stratified sampling
+			return StrategyStratified, 0.85
 		}
-		return StrategySketch, 0.75
+		// Regular GROUP BY → use sketching
+		return StrategySketch, 0.80
 	}
 
-	if features.TableSize > 500 && (features.HasCount || features.HasSum) && features.ErrorTolerance > 0.02 {
-		return StrategySample, 0.70
+	// Large aggregation queries with error tolerance
+	if features.TableSize > 5000 && (features.HasCount || features.HasSum || features.HasAvg) && features.ErrorTolerance > 0.001 {
+		return StrategySample, 0.85
 	}
 
+	// Medium size tables with basic aggregations
+	if features.TableSize > 1000 && (features.HasCount || features.HasSum) && features.ErrorTolerance > 0.001 {
+		return StrategySample, 0.75
+	}
+
+	// Default to exact for safety
 	return StrategyExact, 0.60
 }
 

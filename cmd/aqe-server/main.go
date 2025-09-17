@@ -23,6 +23,8 @@ func main() {
 		dbPath = "aqe.sqlite"
 	}
 
+	log.Printf("Using database path: %s", dbPath)
+
 	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {
 		log.Fatalf("failed to open sqlite db: %v", err)
