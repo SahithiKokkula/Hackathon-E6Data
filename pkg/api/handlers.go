@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"math"
 	"net/http"
 	"strconv"
@@ -227,6 +228,33 @@ func (h *Handler) PostQuery(w http.ResponseWriter, r *http.Request) {
 			mlOptimization.Confidence = 0.95
 		}
 	}
+
+	// Validate ML optimization data before writing response
+	if mlOptimization != nil {
+		// Fix any NaN or Inf values that would break JSON serialization
+		if math.IsNaN(mlOptimization.EstimatedError) || math.IsInf(mlOptimization.EstimatedError, 0) {
+			mlOptimization.EstimatedError = 0.01
+		}
+		if math.IsNaN(mlOptimization.EstimatedSpeedup) || math.IsInf(mlOptimization.EstimatedSpeedup, 0) {
+			mlOptimization.EstimatedSpeedup = 1.0
+		}
+		if math.IsNaN(mlOptimization.Confidence) || math.IsInf(mlOptimization.Confidence, 0) {
+			mlOptimization.Confidence = 0.95
+		}
+
+		// Also check transformations for invalid content
+		validTransformations := make([]string, 0, len(mlOptimization.Transformations))
+		for _, t := range mlOptimization.Transformations {
+			if !strings.Contains(t, "NaN") && !strings.Contains(t, "+Inf") && !strings.Contains(t, "-Inf") {
+				validTransformations = append(validTransformations, t)
+			} else {
+				validTransformations = append(validTransformations, "Applied learning adjustments")
+			}
+		}
+		mlOptimization.Transformations = validTransformations
+	}
+
+	log.Printf("About to write response with ML optimization: %+v", mlOptimization)
 
 	writeJSON(w, http.StatusOK, QueryResponse{
 		Status:            "ok",

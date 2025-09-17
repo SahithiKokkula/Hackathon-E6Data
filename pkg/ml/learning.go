@@ -560,8 +560,18 @@ func (lo *LearningOptimizer) applyTransformationsWithLearning(ctx context.Contex
 
 		for _, h := range history {
 			if OptimizationStrategy(h.Strategy) == strategy {
-				speedupAdjustment += h.ActualSpeedup / h.PredictedSpeedup
-				errorAdjustment += h.ActualError / h.PredictedError
+				// Prevent division by zero which causes NaN/Inf
+				if h.PredictedSpeedup > 0 {
+					speedupAdjustment += h.ActualSpeedup / h.PredictedSpeedup
+				} else {
+					speedupAdjustment += 1.0 // Default to no adjustment
+				}
+
+				if h.PredictedError > 0 {
+					errorAdjustment += h.ActualError / h.PredictedError
+				} else {
+					errorAdjustment += 1.0 // Default to no adjustment
+				}
 				count++
 			}
 		}
@@ -570,9 +580,25 @@ func (lo *LearningOptimizer) applyTransformationsWithLearning(ctx context.Contex
 			speedupAdjustment /= float64(count)
 			errorAdjustment /= float64(count)
 
+			// Additional safety checks to prevent NaN/Inf
+			if math.IsNaN(speedupAdjustment) || math.IsInf(speedupAdjustment, 0) {
+				speedupAdjustment = 1.0
+			}
+			if math.IsNaN(errorAdjustment) || math.IsInf(errorAdjustment, 0) {
+				errorAdjustment = 1.0
+			}
+
 			// Apply learned adjustments (with dampening to prevent overcorrection)
 			speedup *= (1.0 + (speedupAdjustment-1.0)*0.3)
 			estimatedError *= (1.0 + (errorAdjustment-1.0)*0.3)
+
+			// Final safety checks on the results
+			if math.IsNaN(speedup) || math.IsInf(speedup, 0) || speedup <= 0 {
+				speedup = 1.0
+			}
+			if math.IsNaN(estimatedError) || math.IsInf(estimatedError, 0) || estimatedError < 0 {
+				estimatedError = 0.01
+			}
 
 			transformations = append(transformations, fmt.Sprintf("Applied learning adjustments (speedup: %.2fx, error: %.2fx)", speedupAdjustment, errorAdjustment))
 		}
